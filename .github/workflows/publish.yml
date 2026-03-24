@@ -1,0 +1,74 @@
+# sell-con/releases - Draft Release Publisher
+# ebay-patrol-pro の Actions が draft リリース + repository_dispatch を送信
+# → このワークフローが GITHUB_TOKEN で draft を公開
+# → 表示は「github-actions[bot]」になり個人名が出ない
+
+name: Publish Release
+
+on:
+  repository_dispatch:
+    types: [create-release]
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.client_payload.tag }}
+        run: |
+          echo "Publishing release for tag: ${TAG}"
+
+          # draft リリースがアップロード完了するまで待つ
+          for i in $(seq 1 12); do
+            RELEASE_ID=$(gh api repos/sell-con/releases/releases \
+              --jq ".[] | select(.tag_name==\"${TAG}\" and .draft==true) | .id" 2>/dev/null)
+
+            if [ -n "$RELEASE_ID" ]; then
+              # アセットが揃っているか確認（最低3ファイル: 2 dmg + 1 exe）
+              ASSET_COUNT=$(gh api "repos/sell-con/releases/releases/${RELEASE_ID}/assets" --jq 'length')
+              if [ "$ASSET_COUNT" -ge 3 ]; then
+                echo "Found draft release ${RELEASE_ID} with ${ASSET_COUNT} assets"
+                break
+              fi
+              echo "Draft found but only ${ASSET_COUNT} assets, waiting... (${i}/12)"
+            else
+              echo "No draft release yet, waiting... (${i}/12)"
+            fi
+            sleep 15
+          done
+
+          if [ -z "$RELEASE_ID" ]; then
+            echo "❌ No draft release found for ${TAG} after 3 minutes"
+            exit 1
+          fi
+
+          # body を更新して draft を解除（GITHUB_TOKEN で実行 → github-actions[bot]）
+          BODY=$(cat <<'BODY_EOF'
+          ## Sell Con ${TAG}
+
+          ### Downloads
+          - **Windows**: `Sell Con Setup *.exe` をダウンロードして実行
+          - **Mac (Apple Silicon)**: `*-arm64.dmg` をダウンロード
+          - **Mac (Intel)**: `*.dmg` (arm64でない方) をダウンロード
+
+          ### インストール方法
+          **Windows**: exe を実行 → 「次へ」→ インストール完了
+          **Mac**: DMG を開く → Sell Con を Applications にドラッグ → `xattr -cr /Applications/Sell\ Con.app` を実行 → 起動
+          BODY_EOF
+          )
+
+          # 環境変数を展開
+          BODY=$(echo "$BODY" | sed "s/\${TAG}/${TAG}/g")
+
+          gh api "repos/sell-con/releases/releases/${RELEASE_ID}" \
+            -X PATCH \
+            -f body="${BODY}" \
+            -F draft=false \
+            --silent
+
+          echo "✅ Release ${TAG} published by github-actions[bot]"
