@@ -62,8 +62,8 @@ jobs:
             2>/dev/null || true
 
           # 既存リリースがあれば削除
-          EXISTING=$(gh api "repos/${{ github.repository }}/releases/tags/${TAG}" -q '.id' 2>/dev/null || echo "")
-          if [ -n "$EXISTING" ]; then
+          EXISTING=$(gh api "repos/${{ github.repository }}/releases/tags/${TAG}" -q '.id' 2>/dev/null || true)
+          if echo "$EXISTING" | grep -qE '^[0-9]+$'; then
             echo "Deleting existing release ${EXISTING}..."
             gh api "repos/${{ github.repository }}/releases/${EXISTING}" -X DELETE
           fi
