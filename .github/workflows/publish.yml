@@ -86,7 +86,7 @@ jobs:
             -f tag_name="${TAG}" \
             -f name="Sell Con ${TAG}" \
             -f body="${BODY}" \
-            -F draft=false \
+            -F draft=true \
             -q '.id')
           echo "Release created: ${RELEASE_ID}"
 
