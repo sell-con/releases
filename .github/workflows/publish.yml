@@ -74,7 +74,8 @@ jobs:
           ### Downloads
           - **Windows**: \`Sell Con Setup *.exe\` をダウンロードして実行
           - **Mac (Apple Silicon)**: \`*-arm64.dmg\` をダウンロード
-          - **Mac (Intel)**: \`*.dmg\` (arm64でない方) をダウンロード
+
+          > Mac版はApple Silicon（M1以降）のみ対応しています。Intel Mac版の更新提供は終了しました。
 
           ### インストール方法
           **Windows**: exe を実行 → 「次へ」→ インストール完了
@@ -91,7 +92,7 @@ jobs:
           echo "Release created: ${RELEASE_ID}"
 
           # ファイルアップロード
-          for file in artifacts/mac-builds/* artifacts/win-builds/*; do
+          for file in artifacts/mac-builds/*-arm64.dmg artifacts/win-builds/*.exe; do
             [ -f "$file" ] || continue
             fname=$(basename "$file")
             echo "Uploading: ${fname}..."
