@@ -14,17 +14,31 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.event.client_payload.tag }}
+  cancel-in-progress: false
+
 jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+      - name: Verify release safety
+        run: node --test scripts/release-safety.test.cjs
+      - name: Reject published release replacement
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.client_payload.tag }}
+        run: node scripts/release-safety.cjs preflight "$RELEASE_TAG"
       - name: Download artifacts from source repo
         env:
           GH_TOKEN: ${{ secrets.SOURCE_REPO_TOKEN }}
+          RUN_ID: ${{ github.event.client_payload.run_id }}
+          SOURCE_REPO: ${{ github.event.client_payload.source_repo }}
+          TAG: ${{ github.event.client_payload.tag }}
         run: |
-          RUN_ID="${{ github.event.client_payload.run_id }}"
-          SOURCE_REPO="${{ github.event.client_payload.source_repo }}"
-          TAG="${{ github.event.client_payload.tag }}"
+          [[ "$RUN_ID" =~ ^[0-9]+$ ]] || exit 1
+          [[ "$SOURCE_REPO" == "yamatokondo0707-coder/ebay-patrol-pro" ]] || exit 1
 
           echo "Source: ${SOURCE_REPO}, Run: ${RUN_ID}, Tag: ${TAG}"
           mkdir -p artifacts
@@ -51,9 +65,8 @@ jobs:
       - name: Create release (as github-actions[bot])
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.client_payload.tag }}
         run: |
-          TAG="${{ github.event.client_payload.tag }}"
-
           # タグが無ければ作成
           gh api repos/${{ github.repository }}/git/refs \
             -X POST \
@@ -61,11 +74,14 @@ jobs:
             -f sha="$(gh api repos/${{ github.repository }}/git/ref/heads/main -q '.object.sha')" \
             2>/dev/null || true
 
-          # 既存リリースがあれば削除
-          EXISTING=$(gh api "repos/${{ github.repository }}/releases/tags/${TAG}" -q '.id' 2>/dev/null || true)
-          if echo "$EXISTING" | grep -qE '^[0-9]+$'; then
-            echo "Deleting existing release ${EXISTING}..."
-            gh api "repos/${{ github.repository }}/releases/${EXISTING}" -X DELETE
+          # Keep the previous draft until all replacement assets are uploaded.
+          node scripts/release-safety.cjs preflight "$TAG"
+
+          shopt -s nullglob
+          files=(artifacts/mac-builds/*.dmg artifacts/win-builds/*.exe)
+          if [ "${#files[@]}" -ne 3 ]; then
+            echo "Expected exactly three release assets; no draft was changed."
+            exit 1
           fi
 
           # リリースノート作成
@@ -91,14 +107,6 @@ jobs:
           echo "Release created: ${RELEASE_ID}"
 
           # ファイルアップロード
-          shopt -s nullglob
-          files=(artifacts/mac-builds/*.dmg artifacts/win-builds/*.exe)
-          if [ "${#files[@]}" -lt 3 ]; then
-            echo "❌ Expected at least 3 release assets (Mac arm64 DMG, Mac Intel DMG, Windows EXE), got ${#files[@]}"
-            printf 'Found files:\n'
-            find artifacts -type f | sort
-            exit 1
-          fi
           for file in "${files[@]}"; do
             [ -f "$file" ] || continue
             fname=$(basename "$file")
@@ -110,4 +118,5 @@ jobs:
             echo "✅ ${fname}"
           done
 
-          echo "✅ Release ${TAG} published by github-actions[bot]"
+          node scripts/release-safety.cjs cleanup "$TAG" "$RELEASE_ID"
+          echo "Release ${TAG} is a draft awaiting verification and manual publication."
